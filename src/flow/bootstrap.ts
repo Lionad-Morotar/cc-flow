@@ -9,14 +9,14 @@
  */
 
 import { spawn } from 'node:child_process'
-import { readFile, rm, mkdtemp } from 'node:fs/promises'
+import { readFile, rm, mkdtemp, open } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { isPidAlive, killBridge, listRegistries, readRegistry, writeRegistry } from './registry.js'
 import { getTeamDir, sanitizeTeamName } from './paths.js'
 import { generateToken } from './token.js'
-import { resolveTeamDirBySession } from './team-resolve.js'
+import { resolveTeamDirBySession, createTeamForSession, readTeamConfig } from './team-resolve.js'
 import { inferProjectInfo } from './project-info.js'
 import type { FlowRegistryEntry } from './types.js'
 
@@ -128,12 +128,28 @@ async function start(args: StartArgs): Promise<void> {
   // does not match the main session ID when the teammate was created via the
   // Agent tool (the teammate lives in a child session). If no --team-dir is
   // provided, fall back to probing by session for backwards compatibility.
-  const teamDir = args.teamDir ?? await resolveTeamDirBySession(args.sessionId)
+  let teamDir = args.teamDir ?? await resolveTeamDirBySession(args.sessionId)
+
+  // In current Claude Code versions the Agent tool creates a subagent team, not
+  // a team owned by the main session. The bridge needs a leader inbox for the
+  // main session, so create one if it does not already exist. This is a
+  // no-op when CC has already created the team (e.g. via Agent Teams).
   if (!teamDir) {
-    throw new Error(
-      `No team directory found for session ${args.sessionId}. ` +
-        'Create the placeholder teammate (via the Agent tool) before starting the Flow Bridge, or pass --team-dir explicitly.',
-    )
+    teamDir = args.teamDir ?? getTeamDir(`session-${sessionShortId}`)
+  }
+
+  // Validate that the target directory actually belongs to the main session.
+  // If it belongs to a stale or subagent session, refuse to overwrite it.
+  const existingConfig = await readTeamConfig(teamDir)
+  if (existingConfig) {
+    if (existingConfig.leadSessionId !== args.sessionId) {
+      throw new Error(
+        `Team directory ${teamDir} exists but leadSessionId (${existingConfig.leadSessionId}) ` +
+          `does not match session ${args.sessionId}. Refusing to use an alien team directory.`,
+      )
+    }
+  } else {
+    await createTeamForSession(teamDir, args.sessionId)
   }
 
   // Idempotency: if a bridge for this session is already alive, reuse it.
@@ -163,8 +179,10 @@ async function start(args: StartArgs): Promise<void> {
 
   const readyDir = await mkdtemp(join(tmpdir(), 'cc-flow-ready-'))
   const readyFile = `${readyDir}/ready`
+  const stderrLog = `${readyDir}/stderr.log`
 
   const bridgePath = findBridgeBundle()
+  const stderrFd = await open(stderrLog, 'w')
   const child = spawn(
     process.execPath,
     [
@@ -182,7 +200,7 @@ async function start(args: StartArgs): Promise<void> {
     ],
     {
       detached: true,
-      stdio: 'ignore',
+      stdio: ['ignore', 'ignore', stderrFd.fd],
       // Pass the token via env, not argv, so it never appears in
       // /proc/<pid>/cmdline (which is world-readable on Linux) or ps output.
       env: { ...process.env, CC_FLOW_TOKEN: token },
@@ -191,6 +209,7 @@ async function start(args: StartArgs): Promise<void> {
   child.unref()
 
   if (child.pid === undefined) {
+    await stderrFd.close()
     throw new Error('Failed to spawn Flow Bridge process: no pid assigned')
   }
   entry.pid = child.pid
@@ -203,7 +222,27 @@ async function start(args: StartArgs): Promise<void> {
       if (code !== 0) reject(new Error(`Bridge process exited with code ${code}`))
     })
   })
-  const actualPort = await Promise.race([waitForReadyFile(readyFile), spawnError])
+  let actualPort: number
+  try {
+    actualPort = await Promise.race([waitForReadyFile(readyFile), spawnError])
+  } catch (error) {
+    // If the bridge failed to start, include its captured stderr so the user
+    // sees the real error instead of a generic timeout or exit code.
+    let stderr = ''
+    try {
+      stderr = await readFile(stderrLog, 'utf-8')
+    } catch {
+      // ignore read failure
+    }
+    await stderrFd.close()
+    if (stderr.trim()) {
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)} (bridge stderr: ${stderr.trim()})`,
+      )
+    }
+    throw error
+  }
+  await stderrFd.close()
   entry.port = actualPort
 
   // Best-effort cleanup of the temporary ready directory.

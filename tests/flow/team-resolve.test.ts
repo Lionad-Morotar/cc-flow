@@ -1,8 +1,8 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest'
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { resolveTeamDirBySession, readTeamConfig } from '../../src/flow/team-resolve.js'
+import { resolveTeamDirBySession, readTeamConfig, createTeamForSession } from '../../src/flow/team-resolve.js'
 
 describe('team-resolve', () => {
   let teamsDir: string
@@ -54,5 +54,20 @@ describe('team-resolve', () => {
 
   it('readTeamConfig returns null for a missing config', async () => {
     expect(await readTeamConfig(join(teamsDir, 'nope'))).toBeNull()
+  })
+
+  it('createTeamForSession creates config and leader inbox', async () => {
+    const sessionId = 'create-test-1234'
+    const teamDir = join(teamsDir, 'session-create-test')
+    await createTeamForSession(teamDir, sessionId)
+
+    const config = await readTeamConfig(teamDir)
+    expect(config?.name).toBe('session-create-test')
+    expect(config?.leadSessionId).toBe(sessionId)
+    expect(config?.leadAgentId).toBe('team-lead@session-create-test')
+    expect(config?.members?.[0]).toMatchObject({ name: 'team-lead', agentType: 'team-lead' })
+
+    const inbox = JSON.parse(await readFile(join(teamDir, 'inboxes', 'team-lead.json'), 'utf-8'))
+    expect(inbox).toEqual([])
   })
 })

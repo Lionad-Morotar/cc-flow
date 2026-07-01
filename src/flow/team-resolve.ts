@@ -10,14 +10,16 @@
  * naming convention.
  */
 
-import { readdir, readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { readdir, readFile, mkdir, writeFile } from 'node:fs/promises'
+import { join, basename } from 'node:path'
 import { getTeamsDir } from './paths.js'
 
 export type TeamConfig = {
   name?: string
   leadSessionId?: string
   leadAgentId?: string
+  members?: Array<Record<string, unknown>>
+  createdAt?: number
 }
 
 export async function readTeamConfig(teamDir: string): Promise<TeamConfig | null> {
@@ -50,4 +52,44 @@ export async function resolveTeamDirBySession(sessionId: string): Promise<string
     if (config?.leadSessionId === sessionId) return teamDir
   }
   return null
+}
+
+/**
+ * Create a minimal team directory for the given lead session.
+ *
+ * Why this exists: in current Claude Code versions the Agent tool spawns a
+ * subagent in its own child session team, so the main session never gets a
+ * team directory automatically. The bridge needs a leader inbox that the main
+ * session can poll, so we create one ourselves when CC hasn't done it.
+ *
+ * The directory layout matches CC's own format so that if/when CC discovers
+ * the directory it will treat it as a valid team.
+ */
+export async function createTeamForSession(
+  teamDir: string,
+  sessionId: string,
+): Promise<void> {
+  const name = basename(teamDir)
+  const config: TeamConfig = {
+    name,
+    createdAt: Date.now(),
+    leadAgentId: `team-lead@${name}`,
+    leadSessionId: sessionId,
+    members: [
+      {
+        agentId: `team-lead@${name}`,
+        name: 'team-lead',
+        agentType: 'team-lead',
+        joinedAt: Date.now(),
+        tmuxPaneId: 'leader',
+        cwd: process.cwd(),
+        subscriptions: [],
+        backendType: 'in-process',
+      },
+    ],
+  }
+
+  await mkdir(join(teamDir, 'inboxes'), { recursive: true })
+  await writeFile(join(teamDir, 'config.json'), JSON.stringify(config, null, 2) + '\n', 'utf-8')
+  await writeFile(join(teamDir, 'inboxes', 'team-lead.json'), '[]\n', 'utf-8')
 }

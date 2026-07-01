@@ -362,6 +362,69 @@ describe('bootstrap', () => {
     expect(stderr).toContain('--registry is required')
   })
 
+  it('auto-creates the main session team directory when it does not exist', async () => {
+    // Simulate the real-world case: Agent tool created a child-session team,
+    // so the main session team is missing.
+    await rm(getTeamDir(teamName), { recursive: true, force: true })
+    await rm(getTeamDir(`session-${sessionShortId}`), { recursive: true, force: true })
+
+    const { code, stdout, stderr } = await runBootstrap([
+      '--team',
+      teamName,
+      '--port',
+      '0',
+      '--session-id',
+      sessionId,
+      '--registry',
+      registryPath,
+    ])
+
+    if (code !== 0) {
+      console.error('bootstrap stderr:', stderr)
+    }
+    expect(code).toBe(0)
+    const match = stdout.match(/FLOW_BRIDGE_STARTED port=(\d+) pid=(\d+) registry=(\S+)/)!
+    const pid = Number(match[2])
+
+    // The main-session team directory and leader inbox should have been created.
+    const mainTeamDir = getTeamDir(`session-${sessionShortId}`)
+    const config = JSON.parse(await readFile(join(mainTeamDir, 'config.json'), 'utf-8'))
+    expect(config.leadSessionId).toBe(sessionId)
+    expect(config.leadAgentId).toBe(`team-lead@session-${sessionShortId}`)
+    expect(JSON.parse(await readFile(join(mainTeamDir, 'inboxes', 'team-lead.json'), 'utf-8'))).toEqual([])
+
+    await runBootstrap(['--off', '--registry', registryPath])
+    expect(isPidAlive(pid)).toBe(false)
+  })
+
+  it('rejects an existing team directory that belongs to a different session', async () => {
+    // Create a team directory that looks right but belongs to someone else.
+    await rm(getTeamDir(teamName), { recursive: true, force: true })
+    const alienSessionId = 'alien-session-id-1234'
+    const alienDir = join(teamsDir, `session-${sessionId.slice(0, 8)}`)
+    await mkdir(alienDir, { recursive: true })
+    await writeFile(
+      join(alienDir, 'config.json'),
+      JSON.stringify({ name: `session-${sessionId.slice(0, 8)}`, leadSessionId: alienSessionId }),
+      'utf-8',
+    )
+
+    const { code, stderr } = await runBootstrap([
+      '--team',
+      teamName,
+      '--port',
+      '0',
+      '--session-id',
+      sessionId,
+      '--registry',
+      registryPath,
+    ])
+
+    expect(code).not.toBe(0)
+    expect(stderr).toContain('does not match session')
+    expect(stderr).toContain(alienSessionId)
+  })
+
   it('reports a clear error when the bridge bundle cannot be spawned', async () => {
     const tmpBinDir = await mkdtemp(join(tmpdir(), 'cc-flow-bootstrap-bin-'))
     await copyFile(bootstrapScript, join(tmpBinDir, 'flow-bootstrap.js'))

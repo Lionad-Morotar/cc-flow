@@ -133,6 +133,30 @@ async function resolveTeamDirBySession(sessionId) {
   }
   return null;
 }
+async function createTeamForSession(teamDir, sessionId) {
+  const name = (0, import_node_path3.basename)(teamDir);
+  const config = {
+    name,
+    createdAt: Date.now(),
+    leadAgentId: `team-lead@${name}`,
+    leadSessionId: sessionId,
+    members: [
+      {
+        agentId: `team-lead@${name}`,
+        name: "team-lead",
+        agentType: "team-lead",
+        joinedAt: Date.now(),
+        tmuxPaneId: "leader",
+        cwd: process.cwd(),
+        subscriptions: [],
+        backendType: "in-process"
+      }
+    ]
+  };
+  await (0, import_promises3.mkdir)((0, import_node_path3.join)(teamDir, "inboxes"), { recursive: true });
+  await (0, import_promises3.writeFile)((0, import_node_path3.join)(teamDir, "config.json"), JSON.stringify(config, null, 2) + "\n", "utf-8");
+  await (0, import_promises3.writeFile)((0, import_node_path3.join)(teamDir, "inboxes", "team-lead.json"), "[]\n", "utf-8");
+}
 
 // src/flow/project-info.ts
 var import_promises4 = require("fs/promises");
@@ -253,11 +277,19 @@ function resolveToken() {
 async function start(args) {
   const sessionShortId = args.sessionId.slice(0, 8);
   const token = resolveToken();
-  const teamDir = args.teamDir ?? await resolveTeamDirBySession(args.sessionId);
+  let teamDir = args.teamDir ?? await resolveTeamDirBySession(args.sessionId);
   if (!teamDir) {
-    throw new Error(
-      `No team directory found for session ${args.sessionId}. Create the placeholder teammate (via the Agent tool) before starting the Flow Bridge, or pass --team-dir explicitly.`
-    );
+    teamDir = args.teamDir ?? getTeamDir(`session-${sessionShortId}`);
+  }
+  const existingConfig = await readTeamConfig(teamDir);
+  if (existingConfig) {
+    if (existingConfig.leadSessionId !== args.sessionId) {
+      throw new Error(
+        `Team directory ${teamDir} exists but leadSessionId (${existingConfig.leadSessionId}) does not match session ${args.sessionId}. Refusing to use an alien team directory.`
+      );
+    }
+  } else {
+    await createTeamForSession(teamDir, args.sessionId);
   }
   const existing = await readRegistry(sessionShortId, args.registryPath);
   if (existing && isPidAlive(existing.pid)) {
@@ -283,7 +315,9 @@ async function start(args) {
   };
   const readyDir = await (0, import_promises6.mkdtemp)((0, import_node_path5.join)((0, import_node_os3.tmpdir)(), "cc-flow-ready-"));
   const readyFile = `${readyDir}/ready`;
+  const stderrLog = `${readyDir}/stderr.log`;
   const bridgePath = findBridgeBundle();
+  const stderrFd = await (0, import_promises6.open)(stderrLog, "w");
   const child = (0, import_node_child_process.spawn)(
     process.execPath,
     [
@@ -301,7 +335,7 @@ async function start(args) {
     ],
     {
       detached: true,
-      stdio: "ignore",
+      stdio: ["ignore", "ignore", stderrFd.fd],
       // Pass the token via env, not argv, so it never appears in
       // /proc/<pid>/cmdline (which is world-readable on Linux) or ps output.
       env: { ...process.env, CC_FLOW_TOKEN: token }
@@ -309,6 +343,7 @@ async function start(args) {
   );
   child.unref();
   if (child.pid === void 0) {
+    await stderrFd.close();
     throw new Error("Failed to spawn Flow Bridge process: no pid assigned");
   }
   entry.pid = child.pid;
@@ -318,7 +353,24 @@ async function start(args) {
       if (code !== 0) reject(new Error(`Bridge process exited with code ${code}`));
     });
   });
-  const actualPort = await Promise.race([waitForReadyFile(readyFile), spawnError]);
+  let actualPort;
+  try {
+    actualPort = await Promise.race([waitForReadyFile(readyFile), spawnError]);
+  } catch (error) {
+    let stderr = "";
+    try {
+      stderr = await (0, import_promises6.readFile)(stderrLog, "utf-8");
+    } catch {
+    }
+    await stderrFd.close();
+    if (stderr.trim()) {
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)} (bridge stderr: ${stderr.trim()})`
+      );
+    }
+    throw error;
+  }
+  await stderrFd.close();
   entry.port = actualPort;
   await (0, import_promises6.rm)(readyDir, { recursive: true, force: true });
   await writeRegistry(entry, args.registryPath);

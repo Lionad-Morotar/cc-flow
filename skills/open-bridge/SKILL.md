@@ -16,10 +16,13 @@ argument-hint: "[description]"
 
 ## Workflow
 
+0. 执行当前技能的项目可能曾经打开过 bridge，但注意：/Users/lionad/Github/Lionad-Morotar/cc-flow/skills/open-bridge/SKILL.md
+  0.1 项目内曾经打开的 bridge 或创建的 registry 和当前会话执行的 Workflow 可能没有关联
+  0.2 一般用户不会在同一个会话打开两次 bridge，但如果碰到错误需要排查这种情况
 1. 计算必须的值：
   1.1 `sessionShortId` = `${CLAUDE_SESSION_ID}` 的前 8 位。
   1.2 基于当前会话上下文，生成一段**不超过 100 个字符**的描述，说明这个会话在做什么、当前状态。若用户提供了位置参数，优先使用用户输入；否则由你生成。
-2. 用 Agent 工具创建 teammate “flow”：
+2. 用 Agent 工具创建 teammate “flow”（placeholder，用于保持子会话活跃）：
    ```json
    {
      "description": "cc-flow teammate flow",
@@ -33,13 +36,15 @@ argument-hint: "[description]"
    ```bash
    node ${CLAUDE_PLUGIN_ROOT}/scripts/flow-bootstrap.js \
      --team cc-flow-<sessionShortId> \
-     --team-dir ~/.claude/teams/cc-flow-<sessionShortId> \
+     --team-dir ~/.claude/teams/session-<sessionShortId> \
      --port 0 \
      --session-id ${CLAUDE_SESSION_ID} \
      --registry ~/.claude/cc-flow/<sessionShortId>.json \
      --description "<生成的描述>"
    ```
-   - 必须显式传入 `--team-dir`：Agent 工具创建的 teammate 运行在子会话，team config 中的 `leadSessionId` 是子会话 ID，与 `${CLAUDE_SESSION_ID}` 不同；显式指定目录可绕过基于 `leadSessionId` 的反向探测。
+   - 必须显式传入 `--team-dir`：当前 Claude Code 版本中，Agent 工具创建的 teammate 运行在子会话，team config 中的 `leadSessionId` 是子会话 ID，与 `${CLAUDE_SESSION_ID}` 不同；显式指定目录可绕过基于 `leadSessionId` 的反向探测。
+   - `--team-dir` 必须使用 `~/.claude/teams/session-<sessionShortId>`：bridge 需要把消息写入主会话的 leader inbox，因此目录名必须以主会话的 `session-<sessionShortId>` 结尾。
+   - **自动兜底**：如果 `~/.claude/teams/session-<sessionShortId>` 不存在，bootstrap 会以 `${CLAUDE_SESSION_ID}` 为 `leadSessionId` 自动创建该目录、config.json 和 `inboxes/team-lead.json`。
    - 幂等：若注册表已有存活进程，输出 `FLOW_BRIDGE_ALREADY_RUNNING port=... pid=...`，直接复用其 port/pid。
    - 否则输出 `FLOW_BRIDGE_STARTED port=... pid=...`。
 4. 告知调用方如何取 token（curl 调用需要）。**不要**用 Read 工具读取完整 registry 内容（会让 token 进入 CC transcript）；只把取 token 的命令交给调用方在其自己的 shell 里执行：`jq -r .authToken ~/.claude/cc-flow/<sessionShortId>.json`。注册表文件权限 0600，仅当前用户可读。
@@ -56,11 +61,6 @@ argument-hint: "[description]"
      使用 cc-flow MCP server 的 send 工具，sessionShortId=<sessionShortId>，text=...
      ```
 
-## 安全边界说明
+## 已知限制
 
-- Flow Bridge 只监听 `127.0.0.1`。
-- token 由 bootstrap 自动生成、经环境变量传递、落盘到权限 0600 的注册表文件；信任边界（同 uid = 信任域）与设计取舍见 `docs/adr/2026-06-29-fork1-trust-boundary.md`。
-- 注入的文本以普通 teammate_message 进入主会话，LLM 按自然语言理解；它不会自动执行 slash command、TeamDeleteTool 等工具。
-- SessionEnd hook 会在 CC 会话关闭时自动清理当前 session 的 bridge 和 registry。
-- 创建好的临时文件会经由 cc-flow plugin 注册的 hook 在会话结束时自动删除
-
+- 消息投递依赖 Claude Code 主会话轮询 leader inbox。若主会话从未通过 Agent Teams 等机制创建过 team，bridge 仍会启动并写入 inbox，但**当前 CC 版本不一定能实时把消息注入主会话**。此时需要用户先通过 Agent Teams 触发一次主会话 team 创建，或等待 CC 行为更新。
