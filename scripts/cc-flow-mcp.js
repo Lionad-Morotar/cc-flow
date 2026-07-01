@@ -31017,7 +31017,7 @@ function isPidAlive(pid) {
 }
 
 // src/mcp/server.ts
-var packageVersion = true ? "0.1.0" : "0.1.0";
+var packageVersion = true ? "0.1.1" : "0.1.1";
 var MAX_SEND_TEXT_BYTES = 20 * 1024;
 var SessionEntrySchema = external_exports.object({
   sessionShortId: external_exports.string(),

@@ -19,7 +19,7 @@ import { getFlowRegistryDir } from '../flow/paths.js'
 import type { FlowRegistryEntry } from '../flow/types.js'
 
 declare const __CC_FLOW_VERSION__: string | undefined
-const packageVersion = typeof __CC_FLOW_VERSION__ !== 'undefined' ? __CC_FLOW_VERSION__ : '0.1.0'
+const packageVersion = typeof __CC_FLOW_VERSION__ !== 'undefined' ? __CC_FLOW_VERSION__ : '0.1.1'
 const MAX_SEND_TEXT_BYTES = 20 * 1024
 
 const SessionEntrySchema = z.object({

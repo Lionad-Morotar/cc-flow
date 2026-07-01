@@ -1,6 +1,6 @@
 {
   "name": "cc-flow",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Claude Code plugin：零 patch 上下文注入通道——外部长期运行进程通过本地 HTTP 或 MCP 工具向已打开的 CC 主会话注入上下文。",
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Lionad Morotar",

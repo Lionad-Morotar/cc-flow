@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-01
+
+### Fixed
+
+- open-bridge 注入链路修正：bootstrap 现按成员名 `cc-flow-bridge` 定位 CC 主会话实际轮询的 Agent 子会话 team 目录（取最新 `joinedAt`），此前误用主会话自身 team 目录，导致注入消息无法被主代理接收。
+- bridge 启动失败时输出真实 stderr（写入临时日志后回显），不再返回虚假 SUCCESS，便于定位端口冲突、token 缺失等启动问题。
+
 ## [0.1.0] - 2026-06-30
 
 ### Added
