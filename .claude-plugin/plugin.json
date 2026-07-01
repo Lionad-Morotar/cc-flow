@@ -1,0 +1,18 @@
+{
+  "name": "cc-flow",
+  "version": "0.1.0",
+  "description": "Claude Code plugin：让外部长期运行进程通过本地 HTTP 或 MCP 工具向已打开的 CC 主会话注入上下文。",
+  "author": {
+    "name": "仿生狮子"
+  },
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "repository": "https://github.com/Lionad-Morotar/cc-flow",
+  "homepage": "https://github.com/Lionad-Morotar/cc-flow#readme",
+  "mcpServers": {
+    "cc-flow": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/cc-flow-mcp.js"]
+    }
+  }
+}

@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+packages/skills/cc-flow/scripts/
+*.tsbuildinfo
+
+# Test output
+coverage/
+
+# macOS
+.DS_Store
+
+# Secrets
+.env
+
+*.map
