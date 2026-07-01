@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from 'vitest'
 import { mkdtemp, mkdir, writeFile, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { resolveTeamDirBySession, readTeamConfig, createTeamForSession } from '../../src/flow/team-resolve.js'
+import { resolveTeamDirBySession, readTeamConfig, createTeamForSession, resolveTeamDirByMember } from '../../src/flow/team-resolve.js'
 
 describe('team-resolve', () => {
   let teamsDir: string
@@ -69,5 +69,32 @@ describe('team-resolve', () => {
 
     const inbox = JSON.parse(await readFile(join(teamDir, 'inboxes', 'team-lead.json'), 'utf-8'))
     expect(inbox).toEqual([])
+  })
+
+  it('resolveTeamDirByMember finds the most recent team containing the named agent', async () => {
+    await makeTeam('session-alpha', 'aaaaaaaa-1111-2222-3333-444455556666')
+    await makeTeam('session-beta', 'bbbbbbbb-1111-2222-3333-444455556666')
+    const alphaDir = join(teamsDir, 'session-alpha')
+    const betaDir = join(teamsDir, 'session-beta')
+
+    const alphaConfig = JSON.parse(await readFile(join(alphaDir, 'config.json'), 'utf-8'))
+    alphaConfig.members = [
+      { name: 'team-lead', agentId: 'team-lead@session-alpha' },
+      { name: 'cc-flow-bridge', agentId: 'cc-flow-bridge@session-alpha', joinedAt: 1000 },
+    ]
+    await writeFile(join(alphaDir, 'config.json'), JSON.stringify(alphaConfig), 'utf-8')
+
+    const betaConfig = JSON.parse(await readFile(join(betaDir, 'config.json'), 'utf-8'))
+    betaConfig.members = [
+      { name: 'team-lead', agentId: 'team-lead@session-beta' },
+      { name: 'cc-flow-bridge', agentId: 'cc-flow-bridge@session-beta', joinedAt: 2000 },
+    ]
+    await writeFile(join(betaDir, 'config.json'), JSON.stringify(betaConfig), 'utf-8')
+
+    const found = await resolveTeamDirByMember('cc-flow-bridge')
+    expect(found).toBe(betaDir)
+
+    const notFound = await resolveTeamDirByMember('nonexistent-agent')
+    expect(notFound).toBeNull()
   })
 })

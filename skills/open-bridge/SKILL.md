@@ -32,19 +32,19 @@ argument-hint: "[description]"
      "run_in_background": true
    }
    ```
+   记下 Agent 返回结果中的 `agent_id`，例如 `cc-flow-bridge@session-<subSessionShortId>`。bridge 必须指向这个**子会话 team 目录** `~/.claude/teams/session-<subSessionShortId>`，因为当前 CC 版本主会话轮询的是该目录下的 `inboxes/team-lead.json`。
 3. 启动 Flow Bridge。端口用 `0` 由系统分配。token 由 bootstrap 自动生成并通过环境变量传给 bridge —— **不要**在命令行传入 token（命令行参数会进 shell history 与进程 argv）：
    ```bash
    node ${CLAUDE_PLUGIN_ROOT}/scripts/flow-bootstrap.js \
      --team cc-flow-<sessionShortId> \
-     --team-dir ~/.claude/teams/session-<sessionShortId> \
+     --team-dir ~/.claude/teams/session-<subSessionShortId> \
      --port 0 \
      --session-id ${CLAUDE_SESSION_ID} \
      --registry ~/.claude/cc-flow/<sessionShortId>.json \
      --description "<生成的描述>"
    ```
-   - 必须显式传入 `--team-dir`：当前 Claude Code 版本中，Agent 工具创建的 teammate 运行在子会话，team config 中的 `leadSessionId` 是子会话 ID，与 `${CLAUDE_SESSION_ID}` 不同；显式指定目录可绕过基于 `leadSessionId` 的反向探测。
-   - `--team-dir` 必须使用 `~/.claude/teams/session-<sessionShortId>`：bridge 需要把消息写入主会话的 leader inbox，因此目录名必须以主会话的 `session-<sessionShortId>` 结尾。
-   - **自动兜底**：如果 `~/.claude/teams/session-<sessionShortId>` 不存在，bootstrap 会以 `${CLAUDE_SESSION_ID}` 为 `leadSessionId` 自动创建该目录、config.json 和 `inboxes/team-lead.json`。
+   - 必须显式传入 `--team-dir`：当前 Claude Code 版本中，Agent 工具创建的 teammate 运行在子会话；主会话实际轮询的是子会话 team 的 leader inbox，因此 `--team-dir` 必须指向 Agent 结果中的 `session-<subSessionShortId>`。
+   - 若未传 `--team-dir`，bootstrap 会自动查找包含 `cc-flow-bridge` 成员的 team 目录；找不到时再按主会话 `leadSessionId` 回退（旧行为）。
    - 幂等：若注册表已有存活进程，输出 `FLOW_BRIDGE_ALREADY_RUNNING port=... pid=...`，直接复用其 port/pid。
    - 否则输出 `FLOW_BRIDGE_STARTED port=... pid=...`。
 4. 告知调用方如何取 token（curl 调用需要）。**不要**用 Read 工具读取完整 registry 内容（会让 token 进入 CC transcript）；只把取 token 的命令交给调用方在其自己的 shell 里执行：`jq -r .authToken ~/.claude/cc-flow/<sessionShortId>.json`。注册表文件权限 0600，仅当前用户可读。
@@ -63,4 +63,4 @@ argument-hint: "[description]"
 
 ## 已知限制
 
-- 消息投递依赖 Claude Code 主会话轮询 leader inbox。若主会话从未通过 Agent Teams 等机制创建过 team，bridge 仍会启动并写入 inbox，但**当前 CC 版本不一定能实时把消息注入主会话**。此时需要用户先通过 Agent Teams 触发一次主会话 team 创建，或等待 CC 行为更新。
+- 消息投递依赖 Claude Code 主会话轮询 leader inbox。当前观察到的行为是：主会话轮询的是 Agent 工具创建的子会话 team 的 `team-lead.json`，因此 `--team-dir` 必须指向该子会话目录；指向其他目录时消息不会进入主会话。

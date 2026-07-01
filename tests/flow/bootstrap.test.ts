@@ -362,11 +362,29 @@ describe('bootstrap', () => {
     expect(stderr).toContain('--registry is required')
   })
 
-  it('auto-creates the main session team directory when it does not exist', async () => {
-    // Simulate the real-world case: Agent tool created a child-session team,
-    // so the main session team is missing.
+  it('prefers the subagent team containing cc-flow-bridge', async () => {
+    // Simulate the real-world case: Agent tool created a child-session team with
+    // cc-flow-bridge as a member. The bridge should write to that team's leader
+    // inbox, not to a main-session team.
     await rm(getTeamDir(teamName), { recursive: true, force: true })
     await rm(getTeamDir(`session-${sessionShortId}`), { recursive: true, force: true })
+
+    const childSessionId = 'child-session-id-0000'
+    const childTeamDir = join(teamsDir, 'session-child00')
+    await mkdir(join(childTeamDir, 'inboxes'), { recursive: true })
+    await writeFile(
+      join(childTeamDir, 'config.json'),
+      JSON.stringify({
+        name: 'session-child00',
+        leadSessionId: childSessionId,
+        members: [
+          { name: 'team-lead', agentId: 'team-lead@session-child00' },
+          { name: 'cc-flow-bridge', agentId: 'cc-flow-bridge@session-child00' },
+        ],
+      }),
+      'utf-8',
+    )
+    await writeFile(join(childTeamDir, 'inboxes', 'team-lead.json'), '[]\n', 'utf-8')
 
     const { code, stdout, stderr } = await runBootstrap([
       '--team',
@@ -386,28 +404,15 @@ describe('bootstrap', () => {
     const match = stdout.match(/FLOW_BRIDGE_STARTED port=(\d+) pid=(\d+) registry=(\S+)/)!
     const pid = Number(match[2])
 
-    // The main-session team directory and leader inbox should have been created.
-    const mainTeamDir = getTeamDir(`session-${sessionShortId}`)
-    const config = JSON.parse(await readFile(join(mainTeamDir, 'config.json'), 'utf-8'))
-    expect(config.leadSessionId).toBe(sessionId)
-    expect(config.leadAgentId).toBe(`team-lead@session-${sessionShortId}`)
-    expect(JSON.parse(await readFile(join(mainTeamDir, 'inboxes', 'team-lead.json'), 'utf-8'))).toEqual([])
+    const entry = await readRegistry(sessionShortId)
+    expect(entry!.teamDir).toBe(childTeamDir)
 
     await runBootstrap(['--off', '--registry', registryPath])
     expect(isPidAlive(pid)).toBe(false)
   })
 
-  it('rejects an existing team directory that belongs to a different session', async () => {
-    // Create a team directory that looks right but belongs to someone else.
+  it('errors when no team directory can be found', async () => {
     await rm(getTeamDir(teamName), { recursive: true, force: true })
-    const alienSessionId = 'alien-session-id-1234'
-    const alienDir = join(teamsDir, `session-${sessionId.slice(0, 8)}`)
-    await mkdir(alienDir, { recursive: true })
-    await writeFile(
-      join(alienDir, 'config.json'),
-      JSON.stringify({ name: `session-${sessionId.slice(0, 8)}`, leadSessionId: alienSessionId }),
-      'utf-8',
-    )
 
     const { code, stderr } = await runBootstrap([
       '--team',
@@ -421,8 +426,7 @@ describe('bootstrap', () => {
     ])
 
     expect(code).not.toBe(0)
-    expect(stderr).toContain('does not match session')
-    expect(stderr).toContain(alienSessionId)
+    expect(stderr).toContain('No team directory found')
   })
 
   it('reports a clear error when the bridge bundle cannot be spawned', async () => {

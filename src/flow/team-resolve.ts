@@ -55,6 +55,45 @@ export async function resolveTeamDirBySession(sessionId: string): Promise<string
 }
 
 /**
+ * Returns the absolute team directory that contains a member with the given
+ * agent name, preferring the most recently joined one, or null if no such team
+ * exists.
+ *
+ * Why this exists: in current Claude Code versions the `Agent` tool creates a
+ * subagent in its own child-session team (e.g. `session-<childShortId>`). The
+ * main session polls that team's `team-lead.json` inbox, so the bridge must
+ * write there rather than to a main-session team directory. When multiple stale
+ * teams still have a `cc-flow-bridge` member, we pick the newest one.
+ */
+export async function resolveTeamDirByMember(agentName: string): Promise<string | null> {
+  const teamsDir = getTeamsDir()
+  let names: string[]
+  try {
+    names = await readdir(teamsDir)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw error
+  }
+
+  let bestDir: string | null = null
+  let bestJoinedAt = -1
+
+  for (const name of names) {
+    const teamDir = join(teamsDir, name)
+    const config = await readTeamConfig(teamDir)
+    const member = config?.members?.find((m: Record<string, unknown>) => m.name === agentName)
+    if (!member) continue
+
+    const joinedAt = typeof member.joinedAt === 'number' ? member.joinedAt : 0
+    if (joinedAt > bestJoinedAt) {
+      bestJoinedAt = joinedAt
+      bestDir = teamDir
+    }
+  }
+  return bestDir
+}
+
+/**
  * Create a minimal team directory for the given lead session.
  *
  * Why this exists: in current Claude Code versions the Agent tool spawns a

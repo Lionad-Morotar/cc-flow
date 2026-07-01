@@ -133,29 +133,29 @@ async function resolveTeamDirBySession(sessionId) {
   }
   return null;
 }
-async function createTeamForSession(teamDir, sessionId) {
-  const name = (0, import_node_path3.basename)(teamDir);
-  const config = {
-    name,
-    createdAt: Date.now(),
-    leadAgentId: `team-lead@${name}`,
-    leadSessionId: sessionId,
-    members: [
-      {
-        agentId: `team-lead@${name}`,
-        name: "team-lead",
-        agentType: "team-lead",
-        joinedAt: Date.now(),
-        tmuxPaneId: "leader",
-        cwd: process.cwd(),
-        subscriptions: [],
-        backendType: "in-process"
-      }
-    ]
-  };
-  await (0, import_promises3.mkdir)((0, import_node_path3.join)(teamDir, "inboxes"), { recursive: true });
-  await (0, import_promises3.writeFile)((0, import_node_path3.join)(teamDir, "config.json"), JSON.stringify(config, null, 2) + "\n", "utf-8");
-  await (0, import_promises3.writeFile)((0, import_node_path3.join)(teamDir, "inboxes", "team-lead.json"), "[]\n", "utf-8");
+async function resolveTeamDirByMember(agentName) {
+  const teamsDir = getTeamsDir();
+  let names;
+  try {
+    names = await (0, import_promises3.readdir)(teamsDir);
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+  let bestDir = null;
+  let bestJoinedAt = -1;
+  for (const name of names) {
+    const teamDir = (0, import_node_path3.join)(teamsDir, name);
+    const config = await readTeamConfig(teamDir);
+    const member = config?.members?.find((m) => m.name === agentName);
+    if (!member) continue;
+    const joinedAt = typeof member.joinedAt === "number" ? member.joinedAt : 0;
+    if (joinedAt > bestJoinedAt) {
+      bestJoinedAt = joinedAt;
+      bestDir = teamDir;
+    }
+  }
+  return bestDir;
 }
 
 // src/flow/project-info.ts
@@ -277,19 +277,17 @@ function resolveToken() {
 async function start(args) {
   const sessionShortId = args.sessionId.slice(0, 8);
   const token = resolveToken();
-  let teamDir = args.teamDir ?? await resolveTeamDirBySession(args.sessionId);
+  let teamDir = args.teamDir ?? null;
   if (!teamDir) {
-    teamDir = args.teamDir ?? getTeamDir(`session-${sessionShortId}`);
+    teamDir = await resolveTeamDirByMember("cc-flow-bridge");
   }
-  const existingConfig = await readTeamConfig(teamDir);
-  if (existingConfig) {
-    if (existingConfig.leadSessionId !== args.sessionId) {
-      throw new Error(
-        `Team directory ${teamDir} exists but leadSessionId (${existingConfig.leadSessionId}) does not match session ${args.sessionId}. Refusing to use an alien team directory.`
-      );
-    }
-  } else {
-    await createTeamForSession(teamDir, args.sessionId);
+  if (!teamDir) {
+    teamDir = await resolveTeamDirBySession(args.sessionId);
+  }
+  if (!teamDir) {
+    throw new Error(
+      `No team directory found for session ${args.sessionId}. Create the placeholder teammate (via the Agent tool) before starting the Flow Bridge, or pass --team-dir explicitly.`
+    );
   }
   const existing = await readRegistry(sessionShortId, args.registryPath);
   if (existing && isPidAlive(existing.pid)) {
