@@ -129,7 +129,6 @@ pnpm test          # 运行根项目 tests/flow、tests/mcp
 
 ```
 .claude-plugin/
-  marketplace.json                     # marketplace 入口
   plugin.json                          # plugin 元数据 + mcpServers
 hooks/hooks.json                       # SessionEnd cleanup
 skills/open-bridge/SKILL.md            # /cc-flow:open-bridge
